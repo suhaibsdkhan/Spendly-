@@ -1,6 +1,6 @@
 # Spendly: personal expense tracker
 
-**Live app:** https://suhaibsdkhan.github.io/spendly-/
+**Live app:** https://suhaibsdkhan.github.io/Spendly-/
 
 A small web app for logging expenses and tracking spending by category. It runs in any
 browser and can be installed as a desktop app (Chrome or Edge: "Install app" button, or the
