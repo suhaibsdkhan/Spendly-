@@ -1,7 +1,7 @@
 // Caches the app shell so it opens offline. Bump VERSION when files change.
-const VERSION = 'spendly-v2';
+const VERSION = 'spendly-v3';
 const ASSETS = [
-  './', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest',
+  './', 'index.html', 'styles.css', 'app.js', 'statement.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 
