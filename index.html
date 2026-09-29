@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Spendly</title>
+  <meta name="description" content="Log personal expenses and track spending by category.">
+  <meta name="theme-color" content="#0f766e">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="icons/icon.svg" alt="" width="28" height="28">
+      <span>Spendly</span>
+    </div>
+    <div class="month-nav">
+      <button class="icon-btn" id="prevMonth" aria-label="Previous month">&#8249;</button>
+      <button class="month-label" id="monthLabel" title="Jump to this month"></button>
+      <button class="icon-btn" id="nextMonth" aria-label="Next month">&#8250;</button>
+    </div>
+    <div class="top-actions">
+      <button class="btn ghost" id="installBtn" hidden>Install app</button>
+      <button class="icon-btn" id="settingsBtn" aria-label="Settings">&#9881;</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="card add-card" aria-labelledby="addTitle">
+      <h2 id="addTitle">Add expense</h2>
+      <form id="expenseForm" autocomplete="off">
+        <input type="hidden" id="editId">
+        <label class="field amount-field">
+          <span>Amount</span>
+          <div class="amount-wrap">
+            <span class="currency-sym" id="currencySym">$</span>
+            <input id="amount" type="number" inputmode="decimal" step="0.01" min="0.01" placeholder="0.00" required>
+          </div>
+        </label>
+        <div class="field">
+          <span>Category</span>
+          <div class="chips" id="categoryChips" role="radiogroup" aria-label="Category"></div>
+        </div>
+        <div class="row">
+          <label class="field">
+            <span>Date</span>
+            <input id="date" type="date" required>
+          </label>
+          <label class="field grow">
+            <span>Note <em>(optional)</em></span>
+            <input id="note" type="text" maxlength="120" placeholder="e.g. Lunch with Sam">
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn ghost" id="cancelEdit" hidden>Cancel</button>
+          <button type="submit" class="btn primary" id="submitBtn">Add expense</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card summary-card" aria-labelledby="summaryTitle">
+      <h2 id="summaryTitle" class="sr-only">Monthly summary</h2>
+      <div class="stats">
+        <div class="stat">
+          <span class="stat-label">Spent this month</span>
+          <span class="stat-value" id="totalSpent">0</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label" id="budgetLabel">Budget left</span>
+          <span class="stat-value" id="budgetLeft">–</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">vs last month</span>
+          <span class="stat-value" id="vsLast">–</span>
+        </div>
+      </div>
+      <div class="overall-bar" id="overallBarWrap" hidden>
+        <div class="bar"><div class="bar-fill" id="overallBar"></div></div>
+      </div>
+    </section>
+
+    <section class="card breakdown-card" aria-labelledby="breakdownTitle">
+      <div class="card-head">
+        <h2 id="breakdownTitle">By category</h2>
+        <button class="link-btn" id="editBudgetsBtn">Set budgets</button>
+      </div>
+      <div class="donut-wrap">
+        <svg id="donut" viewBox="0 0 120 120" role="img" aria-label="Spending by category"></svg>
+        <div class="donut-center"><span id="donutTotal">0</span><small>total</small></div>
+      </div>
+      <ul class="cat-list" id="categoryBreakdown"></ul>
+    </section>
+
+    <section class="card list-card" aria-labelledby="listTitle">
+      <div class="card-head">
+        <h2 id="listTitle">Expenses</h2>
+        <select id="filterCategory" aria-label="Filter by category">
+          <option value="">All categories</option>
+        </select>
+      </div>
+      <div id="expenseList"></div>
+    </section>
+  </main>
+
+  <dialog id="settingsDialog">
+    <form method="dialog" class="dialog-inner">
+      <div class="dialog-head">
+        <h2>Settings</h2>
+        <button class="icon-btn" value="close" aria-label="Close">&times;</button>
+      </div>
+
+      <label class="field">
+        <span>Currency</span>
+        <select id="currencySelect"></select>
+      </label>
+
+      <h3>Categories and monthly budgets</h3>
+      <p class="hint">Leave a budget empty if you only want to track totals for that category.</p>
+      <div id="categoryEditor"></div>
+      <div class="add-cat">
+        <input id="newCatEmoji" type="text" maxlength="4" placeholder="🏷️" aria-label="New category icon">
+        <input id="newCatName" type="text" maxlength="30" placeholder="New category name" aria-label="New category name">
+        <button type="button" class="btn" id="addCatBtn">Add</button>
+      </div>
+
+      <h3>Your data</h3>
+      <p class="hint">Everything is stored on this device only. Download a backup now and then, and use it to move your data to another device.</p>
+      <div class="data-actions">
+        <button type="button" class="btn" id="exportCsv">Export CSV</button>
+        <button type="button" class="btn" id="exportJson">Download backup</button>
+        <label class="btn file-btn">Restore backup<input type="file" id="importJson" accept="application/json,.json" hidden></label>
+        <button type="button" class="btn danger" id="clearAll">Delete all data</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
