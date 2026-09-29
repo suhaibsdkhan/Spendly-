@@ -133,6 +133,13 @@ input:focus, select:focus, button:focus-visible {
 }
 
 .form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.import-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border);
+  font-size: .82rem; color: var(--muted);
+}
+.import-row span { flex: 1 1 200px; }
+.file-btn[aria-busy="true"] { opacity: .6; pointer-events: none; }
 
 /* Buttons */
 .btn {

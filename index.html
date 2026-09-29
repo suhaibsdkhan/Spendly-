@@ -59,6 +59,10 @@
           <button type="submit" class="btn primary" id="submitBtn">Add expense</button>
         </div>
       </form>
+      <div class="import-row">
+        <span>Or add a whole statement at once. Purchases go into the right month, and ones already added are skipped.</span>
+        <label class="btn file-btn" id="importStatementBtn">Import statement (PDF)<input type="file" id="importStatement" multiple hidden></label>
+      </div>
     </section>
 
     <section class="card summary-card" aria-labelledby="summaryTitle">
@@ -139,6 +143,7 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+  <script src="statement.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

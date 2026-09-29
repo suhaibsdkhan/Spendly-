@@ -34,6 +34,8 @@
       currency: 'USD',
       categories: DEFAULT_CATEGORIES.map(c => ({ id: uid(), ...c, budget: null })),
       expenses: [],
+      merchantCats: {},  // merchant -> category you picked, used when importing statements
+      importedKeys: [],  // statement lines already handled (refunds, deleted imports)
     };
   }
 
@@ -42,10 +44,14 @@
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const s = JSON.parse(raw);
-        if (s && Array.isArray(s.categories) && Array.isArray(s.expenses)) return s;
+        if (s && Array.isArray(s.categories) && Array.isArray(s.expenses)) return withDefaults(s);
       }
     } catch (e) { /* storage unavailable or corrupt; start fresh */ }
     return freshState();
+  }
+
+  function withDefaults(s) {
+    return { merchantCats: {}, importedKeys: [], ...s };
   }
 
   let state = load();
@@ -319,7 +325,11 @@
 
     if (editId) {
       const exp = state.expenses.find(x => x.id === editId);
-      if (exp) Object.assign(exp, { amount, categoryId: selectedCategory, date, note });
+      if (exp) {
+        // Remember the category you chose for this merchant for future statement imports.
+        if (exp.merchant && exp.categoryId !== selectedCategory) state.merchantCats[exp.merchant] = selectedCategory;
+        Object.assign(exp, { amount, categoryId: selectedCategory, date, note });
+      }
       toast('Expense updated');
     } else {
       state.expenses.push({ id: uid(), amount, categoryId: selectedCategory, date, note, createdAt: Date.now() });
@@ -358,9 +368,14 @@
       const idx = state.expenses.findIndex(x => x.id === delBtn.dataset.del);
       if (idx < 0) return;
       lastDeleted = state.expenses.splice(idx, 1)[0];
+      // A deleted statement purchase stays deleted if that statement is imported again.
+      if (lastDeleted.sourceKey) state.importedKeys.push(lastDeleted.sourceKey);
       save(); render();
       toast('Expense deleted', { label: 'Undo', run: () => {
-        if (lastDeleted) { state.expenses.push(lastDeleted); lastDeleted = null; save(); render(); }
+        if (!lastDeleted) return;
+        state.expenses.push(lastDeleted);
+        state.importedKeys = state.importedKeys.filter(k => k !== lastDeleted.sourceKey);
+        lastDeleted = null; save(); render();
       }});
     }
   });
@@ -493,7 +508,7 @@
       const data = JSON.parse(await file.text());
       if (!Array.isArray(data.categories) || !Array.isArray(data.expenses)) throw new Error('bad file');
       if (!confirm(`Replace your current data with this backup (${data.expenses.length} expenses)?`)) return;
-      state = { currency: data.currency || 'USD', categories: data.categories, expenses: data.expenses };
+      state = withDefaults({ ...data, currency: data.currency || 'USD' });
       save(); renderSettings(); render();
       toast('Backup restored');
     } catch (err) {
@@ -506,6 +521,145 @@
     state = freshState();
     save(); renderSettings(); render();
     toast('All data deleted');
+  });
+
+  // ---------- Import statements ----------
+  // The PDF reader is large, so it only loads the first time you import.
+  let pdfLib = null;
+  function loadPdfReader() {
+    pdfLib = pdfLib || new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'vendor/pdfjs/pdf.min.js';
+      s.onload = resolve;
+      s.onerror = () => { pdfLib = null; reject(new Error('Could not load the PDF reader. Check your connection and try again.')); };
+      document.head.appendChild(s);
+    });
+    return pdfLib;
+  }
+
+  const monthName = iso => {
+    const [y, m] = iso.split('-').map(Number);
+    return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  };
+  const niceDate = iso => {
+    const [y, m, d] = iso.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+  const sameMerchant = (a, b) => !!a && !!b && a.slice(0, 4).toUpperCase() === b.slice(0, 4).toUpperCase();
+
+  /**
+   * Works out what a statement changes, without changing anything yet:
+   * new purchases, ones already in Spendly, and refunds that cancel an earlier purchase.
+   */
+  function planImport(statement) {
+    const S = window.SpendlyStatement;
+    const rows = S.keyRows(statement.rows);
+    const handled = new Set(state.importedKeys);
+    const claimed = new Set();
+    const plan = { added: [], known: [], linked: [], refunds: [], unmatchedRefunds: [] };
+
+    for (const r of rows.filter(r => !r.credit && !/^PAYMENT\b/i.test(r.details))) {
+      if (handled.has(r.key) || state.expenses.some(e => e.sourceKey === r.key)) { plan.known.push(r); continue; }
+      // Entered by hand (or from an older backup) with the same date and amount: link it, don't duplicate it.
+      const same = state.expenses.find(e => !e.sourceKey && !claimed.has(e.id) && e.date === r.date && Math.abs(e.amount - r.amount) < 0.005);
+      if (same) { claimed.add(same.id); plan.linked.push({ row: r, expense: same }); continue; }
+      plan.added.push({
+        id: uid(), amount: r.amount, date: r.date,
+        categoryId: S.categorize(r, state.categories, state.merchantCats),
+        note: S.friendlyName(r), merchant: S.merchantKey(r.merchant || r.details),
+        sourceKey: r.key, createdAt: Date.now(),
+      });
+    }
+
+    for (const r of rows.filter(r => r.credit && !/^PAYMENT\b/i.test(r.details))) {
+      if (handled.has(r.key)) continue;
+      const pool = [...plan.added, ...state.expenses].filter(e => !plan.refunds.some(x => x.expense === e));
+      const match = pool.find(e => Math.abs(e.amount - r.amount) < 0.005 && e.date <= r.date
+        && (sameMerchant(e.merchant, r.merchant) || sameMerchant(e.note, r.merchant)));
+      if (match) plan.refunds.push({ row: r, expense: match }); else plan.unmatchedRefunds.push(r);
+    }
+    return plan;
+  }
+
+  function applyImport(plan) {
+    plan.linked.forEach(({ row, expense }) => {
+      expense.sourceKey = row.key;
+      expense.merchant = window.SpendlyStatement.merchantKey(row.merchant || row.details);
+    });
+    state.expenses.push(...plan.added);
+    const refunded = new Set(plan.refunds.map(x => x.expense.id));
+    state.expenses = state.expenses.filter(e => !refunded.has(e.id));
+    plan.refunds.forEach(x => {
+      state.importedKeys.push(x.row.key);
+      if (x.expense.sourceKey) state.importedKeys.push(x.expense.sourceKey);
+    });
+    save();
+  }
+
+  function describePlan(statement, plan) {
+    const lines = [`Statement ${niceDate(statement.start)} to ${niceDate(statement.end)}`, ''];
+    const refunded = new Set(plan.refunds.map(x => x.expense));
+    const added = plan.added.filter(e => !refunded.has(e));
+    const byMonth = new Map();
+    added.forEach(e => { const k = e.date.slice(0, 7); byMonth.set(k, (byMonth.get(k) || 0) + e.amount); });
+    const total = added.reduce((t, e) => t + e.amount, 0);
+    lines.push(`• ${added.length} new purchase${added.length === 1 ? '' : 's'} (${fmt(total)})`);
+    [...byMonth].sort().forEach(([k, v]) => lines.push(`     ${monthName(k + '-01')}: +${fmt(v)}`));
+    const already = plan.known.length + plan.linked.length;
+    if (already) lines.push(`• ${already} already in Spendly, skipped`);
+    if (plan.refunds.length) lines.push(`• ${plan.refunds.length} refund${plan.refunds.length === 1 ? '' : 's'}: the refunded purchase${plan.refunds.length === 1 ? ' is' : 's are'} removed`);
+    if (plan.unmatchedRefunds.length) lines.push(`• ${plan.unmatchedRefunds.length} refund${plan.unmatchedRefunds.length === 1 ? '' : 's'} for purchases not in Spendly, ignored`);
+    lines.push('• Card payments are not expenses, so they are skipped');
+    const { purchases } = statement.checks;
+    if (purchases.expected != null && Math.abs(purchases.found - purchases.expected) > 0.005) {
+      lines.push('', `Heads up: the statement lists ${fmt(purchases.expected)} in purchases but ${fmt(purchases.found)} was read. Some lines may be missing.`);
+    }
+    return lines.join('\n');
+  }
+
+  $('#importStatement').addEventListener('change', async e => {
+    const files = [...e.target.files];
+    e.target.value = '';
+    if (!files.length) return;
+    const btn = $('#importStatementBtn');
+    btn.setAttribute('aria-busy', 'true');
+    let lastDate = null;
+    let addedCount = 0;
+    try {
+      await loadPdfReader();
+      for (const file of files) {
+        let statement;
+        try {
+          statement = window.SpendlyStatement.parseStatement(await window.SpendlyStatement.pdfToLines(file));
+        } catch (err) {
+          alert(`${file.name}: ${/password/i.test(err.message) ? 'this PDF is password protected.' : /Invalid PDF|Missing PDF/i.test(err.message) ? "this isn't a PDF. Download the statement PDF from your bank and pick that." : err.message || 'this file could not be read as a statement.'}`);
+          continue;
+        }
+        const plan = planImport(statement);
+        if (!plan.added.length && !plan.refunds.length) {
+          alert(`${file.name}: everything on this statement is already in Spendly.`);
+          continue;
+        }
+        if (!confirm(describePlan(statement, plan) + '\n\nImport it?')) continue;
+        applyImport(plan);
+        addedCount += plan.added.filter(x => !plan.refunds.some(r => r.expense === x)).length;
+        const newest = plan.added.map(x => x.date).sort().pop();
+        if (newest && (!lastDate || newest > lastDate)) lastDate = newest;
+      }
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      btn.removeAttribute('aria-busy');
+    }
+    if (addedCount) {
+      const [y, m] = lastDate.split('-').map(Number);
+      viewYear = y; viewMonth = m - 1;
+      if (!$('#editId').value) $('#date').value = defaultDate();
+      render();
+      toast(`Imported ${addedCount} purchase${addedCount === 1 ? '' : 's'}. Tap ✎ on any to change its category.`);
+    } else {
+      render();
+    }
   });
 
   // ---------- Install (PWA) ----------
